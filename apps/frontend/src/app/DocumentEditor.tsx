@@ -12,107 +12,143 @@ import {
 } from '@syncfusion/ej2-react-documenteditor';
 import '@syncfusion/ej2-react-documenteditor/styles/material.css';
 import '@syncfusion/ej2-splitbuttons/styles/material.css';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useDebouncedCallback } from 'use-debounce';
+import { ClauseSidebar } from '../components/ClauseSidebar';
+import { EditorStyles } from '../components/EditorStyles';
+import { Header } from '../components/Header';
+import { LoadingOverlay } from '../components/LoadingOverlay';
+import { EDITOR_TOOLBAR_ITEMS } from '../constants/editor';
+import { useClauseManager } from '../hooks/useClauseManager';
+import { useDocumentEditor } from '../hooks/useDocumentEditor';
+import { useSaveStatus } from '../hooks/useSaveStatus';
+import { Clause } from '../services/documentService';
 
 DocumentEditorContainerComponent.Inject(Toolbar);
 registerLicense(
-  'Ngo9BigBOggjHTQxAR8/V1NMaF1cXmhNYVJ2WmFZfVtgdV9DZVZUTGYuP1ZhSXxWdkZiWH9fdXJVR2BaWEE='
+  'Ngo9BigBOggjHTQxAR8/V1NMaF1cXmhNYVJ2WmFZfVtgdV9DZVZUTGYuP1ZhSxWdkZiWH9fdXJVR2BaWEE='
 );
 
 export const DocumentEditor = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const editorRef = useRef<DocumentEditorContainerComponent>(null);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [selectedClauseId, setSelectedClauseId] = useState<string | null>(null);
 
-  const handleOpen = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const fileInput = event.target.files?.[0];
-    const editor = editorRef.current!.documentEditor;
+  const {
+    editorRef,
+    clauseService,
+    isLoading,
+    hasLoaded,
+    initializeClauseService,
+    loadDocument,
+    saveDocument,
+    setupContentChangeHandler,
+  } = useDocumentEditor();
 
-    if (!fileInput) return;
+  const { saveStatus, setSaving, setSaved } = useSaveStatus();
 
-    editor.open(fileInput);
+  const {
+    insertedClauses,
+    addClause,
+    removeClause,
+    removeAllClauses,
+    initializeClauses,
+    updateClauseContents,
+  } = useClauseManager({
+    clauseService,
+    onClausesChange: () => {
+      debouncedSave();
+    },
+  });
+
+  const debouncedUpdateClauseContents = useDebouncedCallback(
+    updateClauseContents,
+    1000
+  );
+
+  const handleRemoveClause = (clause: Clause) => {
+    removeClause(clause.id);
   };
 
-  const handleDownload = async () => {
-    const editor = editorRef.current!.documentEditor;
-    const blob = await editor.saveAsBlob('Docx');
-
-    const file = new File([blob], `Document.docx`, {
-      type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    });
-
-    downloadFile(file);
+  const handleSelectClause = (clause: Clause) => {
+    if (clauseService) {
+      clauseService.selectClause(clause);
+      setSelectedClauseId(clause.id);
+    }
   };
+
+  const handleSave = async () => {
+    setSaving();
+    const success = await saveDocument(insertedClauses);
+    if (success) {
+      setSaved();
+    }
+  };
+
+  const debouncedSave = useDebouncedCallback(handleSave, 1500);
 
   useEffect(() => {
-    const editor = editorRef.current!.documentEditor;
+    initializeClauseService();
+  }, [initializeClauseService]);
 
-    editor.contentChange = async () => {
-      console.log('Document Content changed');
-      const blob = await editor.saveAsBlob('Docx');
-      const file = new File([blob], `Document.docx`, {
-        type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      });
+  useEffect(() => {
+    if (clauseService && !hasLoaded) {
+      loadDocument(initializeClauses);
+    }
+  }, [clauseService, hasLoaded, loadDocument, initializeClauses]);
 
-      console.log(file);
-    };
-  }, []);
+  useEffect(() => {
+    setupContentChangeHandler(debouncedSave, debouncedUpdateClauseContents);
+  }, [setupContentChangeHandler, debouncedSave, debouncedUpdateClauseContents]);
+
+  useEffect(() => {
+    if (editorRef.current?.documentEditor) {
+      setupContentChangeHandler(debouncedSave, debouncedUpdateClauseContents);
+    }
+  }, [
+    editorRef.current?.documentEditor,
+    setupContentChangeHandler,
+    debouncedSave,
+    debouncedUpdateClauseContents,
+  ]);
 
   return (
-    <>
-      <div className="px-24 bg-gray-300 pt-12 h-screen">
-        <div className="flex justify-end space-x-4 mb-4">
-          <button
-            className="bg-gray-500 text-white py-2 px-4 rounded"
-            onClick={() => fileInputRef.current?.click()}
-          >
-            Open
-          </button>
-          <input
-            type="file"
-            accept=".docx"
-            ref={fileInputRef}
-            style={{ display: 'none' }}
-            onChange={handleOpen}
-          />
-          <button
-            className="bg-gray-500 text-white py-2 px-4 rounded"
-            onClick={handleDownload}
-          >
-            Download
-          </button>
-        </div>
-        <div>
+    <div className="relative h-screen bg-gray-300">
+      {isLoading && <LoadingOverlay />}
+
+      <ClauseSidebar
+        isOpen={isSidebarOpen}
+        onClose={() => setIsSidebarOpen(false)}
+        insertedClauses={insertedClauses}
+        onAddClause={addClause}
+        onRemoveClause={handleRemoveClause}
+        onRemoveAllClauses={removeAllClauses}
+        onSelectClause={handleSelectClause}
+        selectedClauseId={selectedClauseId}
+      />
+
+      <div className="h-full flex flex-col">
+        <Header
+          isSidebarOpen={isSidebarOpen}
+          setIsSidebarOpen={setIsSidebarOpen}
+          insertedClauses={insertedClauses}
+          saveStatus={saveStatus}
+          fileInputRef={fileInputRef}
+          editorRef={editorRef}
+        />
+        <div className="flex-1 px-6 pb-6">
+          <EditorStyles />
           <DocumentEditorContainerComponent
-            height="calc(100vh - 200px)"
+            height="100%"
             serviceUrl="https://ej2services.syncfusion.com/production/web-services/api/documenteditor/"
             enableToolbar={true}
             showPropertiesPane={false}
             ref={editorRef}
-            toolbarItems={[
-              'New',
-              'Open',
-              'Separator',
-              'Undo',
-              'Redo',
-              'Separator',
-              'Bookmark',
-              'Table',
-              'Separator',
-              'Find',
-            ]}
-            contentChange={(e) => {}}
+            toolbarItems={EDITOR_TOOLBAR_ITEMS as any}
+            contentChange={debouncedSave}
           />
         </div>
       </div>
-    </>
+    </div>
   );
-};
-
-const downloadFile = (file: File) => {
-  const url = URL.createObjectURL(file);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = file.name;
-  document.body.appendChild(a);
-  a.click();
 };
